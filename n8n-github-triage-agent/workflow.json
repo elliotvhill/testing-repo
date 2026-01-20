@@ -128,6 +128,31 @@
               },
               "renameOutput": true,
               "outputKey": "Feature Request"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "1c0f4055-23da-4523-acaf-4bb4cc155802",
+                    "leftValue": "={{ $json.labels }}",
+                    "rightValue": 1,
+                    "operator": {
+                      "type": "array",
+                      "operation": "lengthLt",
+                      "rightType": "number"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "Unclassified Triage"
             }
           ]
         },
@@ -140,7 +165,7 @@
       "typeVersion": 3.4,
       "position": [
         448,
-        144
+        128
       ],
       "id": "f85d37fc-5b3e-4ac5-a315-703b36ee40dc",
       "name": "Switch"
@@ -168,7 +193,7 @@
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.4,
       "position": [
-        896,
+        1008,
         -32
       ],
       "id": "5ebbc5ca-2037-49b2-99b4-62a5eced3279",
@@ -189,7 +214,9 @@
           "value": "C0A8X8SS52T",
           "mode": "id"
         },
-        "text": "=A new issue: \"{{ $json.title }}\" has been reported by *{{ $json.user.login }}*",
+        "messageType": "block",
+        "blocksUi": "={{ $json.slackBlock }}",
+        "text": "={{ $json.slackBlock.blocks[0].text }}",
         "otherOptions": {
           "botProfile": {
             "imageValues": {
@@ -202,7 +229,7 @@
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.4,
       "position": [
-        672,
+        1008,
         160
       ],
       "id": "5f73f1f2-36a7-474b-9830-e85c83671fae",
@@ -223,7 +250,9 @@
           "value": "C0A999E41PX",
           "mode": "id"
         },
-        "text": "=A new issue: \"{{ $json.title }}\" has been reported by *{{ $json.user.login }}*",
+        "messageType": "block",
+        "blocksUi": "={{ $json.slackBlock }}",
+        "text": "={{ $json.slackBlock.blocks[0].text }}",
         "otherOptions": {
           "botProfile": {
             "imageValues": {
@@ -236,7 +265,7 @@
       "type": "n8n-nodes-base.slack",
       "typeVersion": 2.4,
       "position": [
-        672,
+        1008,
         352
       ],
       "id": "4c56fd79-ba88-497a-bad1-e7294d772932",
@@ -251,16 +280,42 @@
     },
     {
       "parameters": {
+        "jsCode": "// Process all incoming issues and return one output per item\nconst items = $input.all();\n\n// ------ helpers ------\nconst safe = (v, fallback = \"-\") => (v === 0 || (v && v !== \"\")) ? v : fallback;\n\nconst getRepoFullName = (repositoryUrl) => {\n  // e.g. https://api.github.com/repos/owner/repo\n  const m = String(repositoryUrl || \"\").match(/repos\\/([^/]+)\\/([^/]+)/i);\n  return m ? `${m[1]}/${m[2]}` : null;\n};\n\nconst getRepoHtmlUrl = (fullName) => (fullName ? `https://github.com/${fullName}` : null);\n\nconst truncate = (text, max = 500) =>{\n  if (!text) return null;\n  const trimmed = String(text).replace(/\\s+/g, \" \").trim();\n  return trimmed.length <= max ? trimmed : trimmed.slice(0, max - 1) + \"...\";\n};\n\nconst formatDate = (iso) => {\n  if (!iso) return \"-\";\n  try {\n    const d = new Date(iso);\n    return d.toISOString().replace(\"T\", \" \").replace(\"Z\", \" UTC\");\n  } catch {\n    return iso;\n  }\n};\n\nconst sumReactions = (reactionsObj) => {\n  if (!reactionsObj || typeof reactionsObj !== \"object\") return 0;\n  const keys = [\"+1\", \"-1\", \"laugh\", \"hooray\", \"confused\", \"heart\", \"rocket\", \"eyes\"];\n  return keys.reduce((acc, k) => acc + (Number(reactionsObj[k]) || 0), 0);\n};\n\n// ------ end helpers ------\n\n// Build blocks for a single issue JSON (where 'shape' is the GitHub issue object)\nconst buildBlocks = (issue) =>{\n  const title = safe(issue.title, \"Untitled feature request\");\n  const number = safe(issue.number, \"-\");\n  const state = safe(issue.state, \"-\");\n  const issueUrl = issue.html_url || \"https://github.com\";\n  const createdAt = formatDate(issue.created_at);\n  const updatedAt = formatDate(issue.updated_at);\n  const reporter = (issue.user && issue.user.login) ? issue.user.login : \"unknown\";\n  const labels = Array.isArray(issue.labels) ? issue.labels : [];\n  const labelsText = labels.length ? labels.map(l => `\\`${l.name}\\``).join(\" \") : \"-\";\n  const reactions = sumReactions(issue.reactions);\n  const repoFull = getRepoFullName(issue.repository_url);\n  const repoHtml = getRepoHtmlUrl(repoFull);\n  const bodyPreview = truncate(issue.body, 600);\n\n  const blocks = [];\n  \n  // Header block\n  blocks.push({\n    type: \"header\",\n    text: { type: \"plain_text\", text: `✨ Feature Request #${number}: ${title}`, emoji: true }\n  });\n  \n  // Repo + Reporter block\n  blocks.push({\n    type: \"section\",\n    fields: [\n      { type: \"mrkdwn\", text: `*Repository:*\\n${repoHtml ? `<${repoHtml}|${repoFull}>` : safe(repoFull)}` },\n      { type: \"mrkdwn\", text: `*Submitted By:*\\n${reporter}` }\n    ]\n  });\n\n  // Labels + State block\n  blocks.push({\n    type: \"section\",\n    fields: [\n      { type: \"mrkdwn\", text: `*Labels:*\\n${labelsText}` },\n      { type: \"mrkdwn\", text: `*State:*\\n${String(state).toUpperCase()}` }\n    ]\n  });\n\n  // Timestamps + Reactions block\n  blocks.push({\n    type: \"context\",\n    elements: [\n      { type: \"mrkdwn\", text: `*Created:* ${createdAt}` },\n      { type: \"mrkdwn\", text: `*Updated:* ${updatedAt}` },\n      { type: \"mrkdwn\", text: `*Reactions:* ${reactions}` }\n    ]\n  });\n\n  // Body preview block\n  if (bodyPreview) {\n    blocks.push({ type: \"divider\" });\n    blocks.push({\n      type: \"section\",\n      text: { type: \"mrkdwn\", text: `*Description*\\n${bodyPreview}` }\n    });\n  }\n\n  // Actions block\n  blocks.push({\n    type: \"actions\",\n    elements: [\n      { type: \"button\", text: { type: \"plain_text\", text: \"View Issue\"}, url: issueUrl, style: \"primary\" },\n      ...(repoHtml ? [{ type: \"button\", text: { type: \"plain_text\", text: \"View Repo\" }, url: repoHtml }] : [])\n    ]\n  });\n\n  return { text: `Feature Request #${number}: ${title}`, blocks };\n};\n\n// ------ map over all inputs ------\nreturn items.map((it) => {\n  const issue = it?.json || {};\n  const payload = buildBlocks(issue);\n  return {\n    json: {\n      text: payload.text, // a nice fallback for Slack\n      slackBlock: { blocks: payload.blocks } // keep the existing GitHub issue shape\n    }\n  }\n})"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        784,
+        160
+      ],
+      "id": "1d2fec47-7d49-4f70-b0e0-83faf8d0a7a1",
+      "name": "Feature Request JavaScript"
+    },
+    {
+      "parameters": {
         "jsCode": "// Process all incoming issues and return one output per item\nconst items = $input.all();\n\n// ------ helpers ------\nconst safe = (v, fallback = \"-\") => (v === 0 || (v && v !== \"\")) ? v : fallback;\n\nconst getRepoFullName = (repositoryUrl) => {\n  // e.g. https://api.github.com/repos/owner/repo\n  const m = String(repositoryUrl || \"\").match(/repos\\/([^/]+)\\/([^/]+)/i);\n  return m ? `${m[1]}/${m[2]}` : null;\n};\n\nconst getRepoHtmlUrl = (fullName) => (fullName ? `https://github.com/${fullName}` : null);\n\nconst truncate = (text, max = 500) =>{\n  if (!text) return null;\n  const trimmed = String(text).replace(/\\s+/g, \" \").trim();\n  return trimmed.length <= max ? trimmed : trimmed.slice(0, max - 1) + \"...\";\n};\n\nconst formatDate = (iso) => {\n  if (!iso) return \"-\";\n  try {\n    const d = new Date(iso);\n    return d.toISOString().replace(\"T\", \" \").replace(\"Z\", \" UTC\");\n  } catch {\n    return iso;\n  }\n};\n\nconst sumReactions = (reactionsObj) => {\n  if (!reactionsObj || typeof reactionsObj !== \"object\") return 0;\n  const keys = [\"+1\", \"-1\", \"laugh\", \"hooray\", \"confused\", \"heart\", \"rocket\", \"eyes\"];\n  return keys.reduce((acc, k) => acc + (Number(reactionsObj[k]) || 0), 0);\n};\n\n// ------ end helpers ------\n\n// Build blocks for a single issue JSON (where 'shape' is the GitHub issue object)\nconst buildBlocks = (issue) =>{\n  const title = safe(issue.title, \"Untitled issue\");\n  const number = safe(issue.number, \"-\");\n  const state = safe(issue.state, \"-\");\n  const issueUrl = issue.html_url || \"https://github.com\";\n  const createdAt = formatDate(issue.created_at);\n  const updatedAt = formatDate(issue.updated_at);\n  const reporter = (issue.user && issue.user.login) ? issue.user.login : \"unknown\";\n  const labels = Array.isArray(issue.labels) ? issue.labels : [];\n  const labelsText = labels.length ? labels.map(l => `\\`${l.name}\\``).join(\" \") : \"-\";\n  const reactions = sumReactions(issue.reactions);\n  const repoFull = getRepoFullName(issue.repository_url);\n  const repoHtml = getRepoHtmlUrl(repoFull);\n  const bodyPreview = truncate(issue.body, 600);\n\n  const blocks = [];\n  \n  // Header block\n  blocks.push({\n    type: \"header\",\n    text: { type: \"plain_text\", text: `🐛 Bug #${number}: ${title}`, emoji: true }\n  });\n  \n  // Repo + Reporter block\n  blocks.push({\n    type: \"section\",\n    fields: [\n      { type: \"mrkdwn\", text: `*Repository:*\\n${repoHtml ? `<${repoHtml}|${repoFull}>` : safe(repoFull)}` },\n      { type: \"mrkdwn\", text: `*Submitted By:*\\n${reporter}` }\n    ]\n  });\n\n  // Labels + State block\n  blocks.push({\n    type: \"section\",\n    fields: [\n      { type: \"mrkdwn\", text: `*Labels:*\\n${labelsText}` },\n      { type: \"mrkdwn\", text: `*State:*\\n${String(state).toUpperCase()}` }\n    ]\n  });\n\n  // Timestamps + Reactions block\n  blocks.push({\n    type: \"context\",\n    elements: [\n      { type: \"mrkdwn\", text: `*Created:* ${createdAt}` },\n      { type: \"mrkdwn\", text: `*Updated:* ${updatedAt}` },\n      { type: \"mrkdwn\", text: `*Reactions:* ${reactions}` }\n    ]\n  });\n\n  // Body preview block\n  if (bodyPreview) {\n    blocks.push({ type: \"divider\" });\n    blocks.push({\n      type: \"section\",\n      text: { type: \"mrkdwn\", text: `*Description*\\n${bodyPreview}` }\n    });\n  }\n\n  // Actions block\n  blocks.push({\n    type: \"actions\",\n    elements: [\n      { type: \"button\", text: { type: \"plain_text\", text: \"View Issue\"}, url: issueUrl, style: \"primary\" },\n      ...(repoHtml ? [{ type: \"button\", text: { type: \"plain_text\", text: \"View Repo\" }, url: repoHtml }] : [])\n    ]\n  });\n\n  return { text: `Bug #${number}: ${title}`, blocks };\n};\n\n// ------ map over all inputs ------\nreturn items.map((it) => {\n  const issue = it?.json || {};\n  const payload = buildBlocks(issue);\n  return {\n    json: {\n      text: payload.text, // a nice fallback for Slack\n      slackBlock: { blocks: payload.blocks } // keep the existing GitHub issue shape\n    }\n  }\n})"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        672,
+        784,
         -32
       ],
       "id": "a590be81-c01b-4dc1-8e61-6ae2006bc6bc",
-      "name": "Code in JavaScript"
+      "name": "Bug Report JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Process all incoming issues and return one output per item\nconst items = $input.all();\n\n// ------ helpers ------\nconst safe = (v, fallback = \"-\") => (v === 0 || (v && v !== \"\")) ? v : fallback;\n\nconst getRepoFullName = (repositoryUrl) => {\n  // e.g. https://api.github.com/repos/owner/repo\n  const m = String(repositoryUrl || \"\").match(/repos\\/([^/]+)\\/([^/]+)/i);\n  return m ? `${m[1]}/${m[2]}` : null;\n};\n\nconst getRepoHtmlUrl = (fullName) => (fullName ? `https://github.com/${fullName}` : null);\n\nconst truncate = (text, max = 500) =>{\n  if (!text) return null;\n  const trimmed = String(text).replace(/\\s+/g, \" \").trim();\n  return trimmed.length <= max ? trimmed : trimmed.slice(0, max - 1) + \"...\";\n};\n\nconst formatDate = (iso) => {\n  if (!iso) return \"-\";\n  try {\n    const d = new Date(iso);\n    return d.toISOString().replace(\"T\", \" \").replace(\"Z\", \" UTC\");\n  } catch {\n    return iso;\n  }\n};\n\nconst sumReactions = (reactionsObj) => {\n  if (!reactionsObj || typeof reactionsObj !== \"object\") return 0;\n  const keys = [\"+1\", \"-1\", \"laugh\", \"hooray\", \"confused\", \"heart\", \"rocket\", \"eyes\"];\n  return keys.reduce((acc, k) => acc + (Number(reactionsObj[k]) || 0), 0);\n};\n\n// ------ end helpers ------\n\n// Build blocks for a single issue JSON (where 'shape' is the GitHub issue object)\nconst buildBlocks = (issue) =>{\n  const title = safe(issue.title, \"Untitled issue\");\n  const number = safe(issue.number, \"-\");\n  const state = safe(issue.state, \"-\");\n  const issueUrl = issue.html_url || \"https://github.com\";\n  const createdAt = formatDate(issue.created_at);\n  const updatedAt = formatDate(issue.updated_at);\n  const reporter = (issue.user && issue.user.login) ? issue.user.login : \"unknown\";\n  const labels = Array.isArray(issue.labels) ? issue.labels : [];\n  const labelsText = labels.length ? labels.map(l => `\\`${l.name}\\``).join(\" \") : \"-\";\n  const reactions = sumReactions(issue.reactions);\n  const repoFull = getRepoFullName(issue.repository_url);\n  const repoHtml = getRepoHtmlUrl(repoFull);\n  const bodyPreview = truncate(issue.body, 600);\n\n  const blocks = [];\n  \n  // Header block\n  blocks.push({\n    type: \"header\",\n    text: { type: \"plain_text\", text: `🧐 Unclassified issue #${number}: ${title}`, emoji: true }\n  });\n  \n  // Repo + Reporter block\n  blocks.push({\n    type: \"section\",\n    fields: [\n      { type: \"mrkdwn\", text: `*Repository:*\\n${repoHtml ? `<${repoHtml}|${repoFull}>` : safe(repoFull)}` },\n      { type: \"mrkdwn\", text: `*Submitted By:*\\n${reporter}` }\n    ]\n  });\n\n  // Labels + State block\n  blocks.push({\n    type: \"section\",\n    fields: [\n      { type: \"mrkdwn\", text: `*Labels:*\\n${labelsText}` },\n      { type: \"mrkdwn\", text: `*State:*\\n${String(state).toUpperCase()}` }\n    ]\n  });\n\n  // Timestamps + Reactions block\n  blocks.push({\n    type: \"context\",\n    elements: [\n      { type: \"mrkdwn\", text: `*Created:* ${createdAt}` },\n      { type: \"mrkdwn\", text: `*Updated:* ${updatedAt}` },\n      { type: \"mrkdwn\", text: `*Reactions:* ${reactions}` }\n    ]\n  });\n\n  // Body preview block\n  if (bodyPreview) {\n    blocks.push({ type: \"divider\" });\n    blocks.push({\n      type: \"section\",\n      text: { type: \"mrkdwn\", text: `*Description*\\n${bodyPreview}` }\n    });\n  }\n\n  // Actions block\n  blocks.push({\n    type: \"actions\",\n    elements: [\n      { type: \"button\", text: { type: \"plain_text\", text: \"View Issue\"}, url: issueUrl, style: \"primary\" },\n      ...(repoHtml ? [{ type: \"button\", text: { type: \"plain_text\", text: \"View Repo\" }, url: repoHtml }] : [])\n    ]\n  });\n\n  return { text: `Unclassified triage issue #${number}: ${title}`, blocks };\n};\n\n// ------ map over all inputs ------\nreturn items.map((it) => {\n  const issue = it?.json || {};\n  const payload = buildBlocks(issue);\n  return {\n    json: {\n      text: payload.text, // a nice fallback for Slack\n      slackBlock: { blocks: payload.blocks } // keep the existing GitHub issue shape\n    }\n  }\n})"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        784,
+        352
+      ],
+      "id": "587cabf8-d0d6-45bd-b0c8-55b6dafac658",
+      "name": "Unclassified Triage JavaScript"
     }
   ],
   "pinData": {},
@@ -302,32 +357,61 @@
       "main": [
         [
           {
-            "node": "Code in JavaScript",
+            "node": "Bug Report JavaScript",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Feature Request",
+            "node": "Feature Request JavaScript",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Unclassified",
+            "node": "Unclassified Triage JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Unclassified Triage JavaScript",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Code in JavaScript": {
+    "Feature Request JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Feature Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bug Report JavaScript": {
       "main": [
         [
           {
             "node": "Bug Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unclassified Triage JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Unclassified",
             "type": "main",
             "index": 0
           }
@@ -340,7 +424,7 @@
     "executionOrder": "v1",
     "availableInMCP": false
   },
-  "versionId": "dde6551b-3825-49ef-9e44-de0d48fe3ff1",
+  "versionId": "48fb7b1d-d02e-43a1-a74f-fc4a3bf463b0",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "4165e982ecb278afa72e3807370edb5cda549d5115abd91e8a57c2d45f97191c"
